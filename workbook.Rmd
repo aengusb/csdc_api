@@ -15,7 +15,7 @@ But...we only have an hour...
 ```{r}
 
 #install.packages("renv")
-#renv::init()
+renv::activate()
 #install.packages("jsonlite")
 #install.packages("httr")
 #install.packages("RSQLite")
@@ -27,7 +27,7 @@ suppressMessages(library(httr))
 suppressMessages(library(jsonlite))
 suppressMessages(library(data.table))
 
-renv::snapshot()
+#renv::snapshot()
 
 log_message = function(message) {
   message <- paste0(Sys.time(),": ", message)
