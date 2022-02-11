@@ -15,7 +15,7 @@ But...we only have an hour...
 ```{r}
 
 #install.packages("renv")
-renv::activate()
+renv::restore()
 #install.packages("jsonlite")
 #install.packages("httr")
 #install.packages("RSQLite")
