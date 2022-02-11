@@ -25,6 +25,7 @@ But...we only have an hour...
 #install.packages("ellipsis")
 #renv::snapshot()
 
+renv::activate()
 renv::restore()
 suppressMessages(library(tidyverse))
 suppressMessages(library(httr))
