@@ -27,9 +27,9 @@ But...we only have an hour...
 
 renv::activate()
 renv::restore()
+suppressMessages(library(jsonlite))
 suppressMessages(library(tidyverse))
 suppressMessages(library(httr))
-suppressMessages(library(jsonlite))
 suppressMessages(library(data.table))
 
 
@@ -274,10 +274,6 @@ top_comments
 
 ```{r}
 
-fields_of_interest <- c("id","subreddit","created_utc","title","author",
-                         "full_link","score","retrieved_on",
-                         "num_comments","domain","url")
-
 before = "90d"
 after = '97d'
 
@@ -285,6 +281,7 @@ ps_result <- ps_default_dat <- list()
 
 for (i in 1:4) {
   
+  # TryCatch is a useful tool when API's sometimes go down to kick back faulty information. Ideally you account for each error, but here we just adopt an error agnostic approach
   message <- tryCatch(
     
     {
@@ -299,12 +296,14 @@ for (i in 1:4) {
                        num_comments = '>20')) %>%
         content("text", encoding = "UTF-8") %>% 
         fromJSON(flatten = FALSE) %>%
-        .$data; x$num_comments
+        .$data
 
+      # Select only the fields of interest and put them into a list
       ps_default_dat[[i]] <- select(ps_result[[i]], all_of(fields_of_interest))
       
       Sys.sleep(2.5)
       
+      # Move 7 days earlier
       before = paste0((i*7)+90,'d')
       after = paste0(((i+1)*7)+90,'d')
 
@@ -347,6 +346,7 @@ for (i in 1:3) {
   
   while (before >= canada_submissions$created_utc[i]) {
     
+    # Here we specify a few parts of the query to only get specific fields
     comments_temp <- GET("https://api.pushshift.io/reddit/search/comment/",
                          query = list(link_id = canada_submissions$id[1],
                                       before = before,
@@ -360,7 +360,7 @@ for (i in 1:3) {
       fromJSON(flatten = FALSE) %>% 
       .$data
     
-    # If we get no new data...
+    # If we get no new data go to the next submission
     if (length(comments_temp) == 0) break
 
     before = min(comments_temp$created_utc)
@@ -405,7 +405,7 @@ bills <- GET("https://api.openparliament.ca/votes",
   content("text", encoding = "UTF-8") %>%
   fromJSON() %>%
   .$objects %>%
-  flatten()
+  jsonlite::flatten()
 
 bills
 ```
@@ -455,22 +455,31 @@ class(api_db); api_db
 
 
 ```{r}
+# sqllite does not like periods in column names
 colnames(bills)[10:11] <- c("description_fr","description_en")
 dbWriteTable(api_db, "bills", bills, overwrite = TRUE)
 
+# Get all columns
 dbGetQuery(api_db, "SELECT * FROM bills")
+
+# Add a limit to how many observations you get
 dbGetQuery(api_db, "SELECT * FROM bills LIMIT 1")
+
+# Select only certain columns
 dbGetQuery(api_db, "SELECT session, result, yea_total, date FROM bills")
 ```
 
 
 ```{r}
 
+# Again, sqllite does not like periods in column names
 colnames(vote_details_df)[3:4] <- c("party_name_en","party_shortname_en")
 dbWriteTable(api_db, "votes", vote_details_df, overwrite = TRUE)
 
+# Check what was written
 dbGetQuery(api_db, "SELECT * FROM votes LIMIT 1")
 
+# More complicated query
 dbGetQuery(api_db, 
            "SELECT bills.session, bills.result, bills.yea_total, bills.nay_total,
            bills.description_en AS description, votes.party_name_en, disagreement
