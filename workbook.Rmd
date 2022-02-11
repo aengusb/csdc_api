@@ -1,0 +1,525 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+# Learning objectives
+
+- Understand the basics of an API and why you should use them
+- Be able to use the GET function and work with .json files
+- Understand the basics of SQL
+
+But...we only have an hour...
+
+```{r}
+
+#install.packages("renv")
+#renv::init()
+#install.packages("jsonlite")
+#install.packages("httr")
+#install.packages("RSQLite")
+#install.packages("tidyverse")
+#install.packages("data.table")
+#install.packages("ellipsis")
+suppressMessages(library(tidyverse))
+suppressMessages(library(httr))
+suppressMessages(library(jsonlite))
+suppressMessages(library(data.table))
+
+renv::snapshot()
+
+log_message = function(message) {
+  message <- paste0(Sys.time(),": ", message)
+  print(message)
+  cat(message, file = "log.txt", append = TRUE, sep  = "\n")
+}
+
+```
+
+# The basics of an API
+
+```{r}
+# https://alexwohlbruck.github.io/cat-facts/docs/
+
+httr::GET("https://cat-fact.herokuapp.com/facts")
+
+# We need to store it as an object
+cat_facts <- GET("https://cat-fact.herokuapp.com/facts")
+
+class(cat_facts)
+summary(cat_facts)
+
+# Let's take a look what is inside cat_facts
+cat_facts %>% 
+  httr::content("text", encoding = "UTF-8")
+
+# Two ways to human read the data...
+dir.create("json")
+content(cat_facts, "text", encoding = "UTF-8") %>%
+  write(., "json/cat_facts.json")
+
+cat_facts %>% 
+  content("text", encoding = "UTF-8") %>%
+  jsonlite::fromJSON(flatten = FALSE)
+
+```
+
+
+```{r}
+
+# Let's pull out some data
+cat_facts %>% 
+  content("text", encoding = "UTF-8") %>%
+  fromJSON(flatten = FALSE) %>%
+  pull(text)
+
+```
+
+# Represent
+
+- Find the elected officials and electoral districts for any Canadian address or postal code, at all levels of government
+- Maintained by Open North
+
+```{r}
+
+# https://represent.opennorth.ca/api/
+
+rep_sets <- GET("https://represent.opennorth.ca/representative-sets") %>%
+  content("text", encoding = "UTF-8") %>% 
+  fromJSON(flatten = FALSE)
+
+summary(rep_sets)
+
+rep_sets$objects
+
+rep_sets$meta
+
+```
+
+## Activity 1 - Let's get the next 20 representative sets
+
+### Pagination
+
+```{r}
+
+rep_sets_next <- GET("") %>%
+  content("text", encoding = "UTF-8") %>% 
+  fromJSON(flatten = FALSE)
+
+```
+
+### Increase the number in a particular query
+
+```{r}
+
+#  Get all the representative sets
+rep_sets_large <- GET("https://represent.opennorth.ca/representative-sets",
+    query = list())
+
+# Which city is 56th?
+
+```
+
+## Let's get additional information on Winnipeg, Regina, and Saskatoon
+
+```{r}
+
+prairie_cities <- rep_sets_large %>%
+  content("text", encoding = "UTF-8") %>% 
+  fromJSON(flatten = FALSE) %>%
+  .$objects %>%
+  filter(str_detect(string = name, pattern = "Winnipeg|Regina|Saskatoon"))
+
+prairie_cities
+
+prairie_cities$related
+```
+
+## Let's get some information on the representatives in each city
+
+# Do 1 city...
+
+```{r}
+
+prairie_cities$related$representatives_url[1]
+
+# Need the specific endpoint
+api_endpoint <- paste0("https://represent.opennorth.ca/",prairie_cities$related$representatives_url[1])
+api_endpoint
+
+rep_json <- GET(api_endpoint, query = list()) %>% 
+    content("text") 
+
+write(rep_json, "json/regina_reps.json")
+  
+rep_dat <- rep_json %>%
+  fromJSON(flatten = FALSE) %>%
+  .$objects %>%
+  select(representative_set_name, name, district_name, photo_url, related)
+rep_dat
+```
+
+# Let's do it for all 3 cities...
+
+```{r}
+# Lists are important here...
+city_rep_data <- list()
+
+# We can loop over the data...
+for (i in 1:length(prairie_cities$related$representatives_url)) {
+
+  city_name <- prairie_cities$related$representatives_url[i] %>%
+    str_remove_all(., "representatives|/|-city-council")
+
+  api_endpoint <- paste0("https://represent.opennorth.ca/",prairie_cities$related$representatives_url[i])
+  
+  # Query that API endpoint
+  rep_json <- GET(api_endpoint, query = list()) %>% 
+    content("text") 
+  
+  # Save the output just in case
+  
+  write(rep_json, paste0("json/",city_name, "_reps.json"))
+  
+  rep_dat <- rep_json %>%
+    fromJSON(flatten = FALSE) %>%
+    .$objects %>%
+    select(representative_set_name, name, district_name, photo_url, related)
+  
+  # Keep the names of the city - this is good practice for list building
+    
+  city_rep_data[[city_name]] <- rep_dat 
+  
+  log_message(paste0('Successfully pulled information for ',city_name,'.'))
+  
+  # Make sure to not spam the API - check rate limits but also be a good citizen of the internet
+  Sys.sleep(2.5)
+  
+}
+
+summary(city_rep_data)
+
+city_rep_data <- bind_rows(city_rep_data)
+
+city_rep_data
+```
+
+
+```{r}
+# Just for fun...
+dir.create("pictures")
+for (i in 1:20) {
+  download.file(url = city_rep_data$photo_url[i],
+              destfile = paste0("pictures/",city_rep_data$name[i],'.jpg'), 
+              mode = 'wb')
+  Sys.sleep(2.5)
+}
+```
+
+# Reddit
+
+```{r}
+# https://github.com/pushshift/api
+
+recent_cad_submissions <- GET("https://api.pushshift.io/reddit/search/submission/",
+          query = list(size = 100, subreddit = 'Canada')) %>%
+  content("text", encoding = "UTF-8") %>% 
+  fromJSON(flatten = FALSE)
+
+colnames(recent_cad_submissions$data)
+recent_cad_submissions$data$title[1:10]
+
+```
+
+## Get top posts 
+
+```{r}
+
+fields_of_interest <- c("id","subreddit","created_utc","title","author",
+                         "full_link","score","retrieved_on",
+                         "num_comments","domain","url")
+
+before = "90d"
+after = '97d'
+
+top_comments <- GET("https://api.pushshift.io/reddit/search/submission/",
+          query = list(before = before, 
+                       after = after, 
+                       size = 100,
+                       sort = 'desc',
+                       subreddit = 'Canada',
+                       sort_type = 'num_comments',
+                       num_comments = '>20')) %>%
+        content("text", encoding = "UTF-8") %>% 
+        fromJSON(flatten = FALSE) %>%
+        .$data %>%
+    select(all_of(fields_of_interest))
+
+top_comments
+```
+
+```{r}
+
+fields_of_interest <- c("id","subreddit","created_utc","title","author",
+                         "full_link","score","retrieved_on",
+                         "num_comments","domain","url")
+
+before = "90d"
+after = '97d'
+
+ps_result <- ps_default_dat <- list()
+
+for (i in 1:4) {
+  
+  message <- tryCatch(
+    
+    {
+      
+      ps_result[[i]] <- GET("https://api.pushshift.io/reddit/search/submission/",
+          query = list(before = before, 
+                       after = after, 
+                       size = 100,
+                       sort = 'desc',
+                       subreddit = 'Canada',
+                       sort_type = 'num_comments',
+                       num_comments = '>20')) %>%
+        content("text", encoding = "UTF-8") %>% 
+        fromJSON(flatten = FALSE) %>%
+        .$data; x$num_comments
+
+      ps_default_dat[[i]] <- select(ps_result[[i]], all_of(fields_of_interest))
+      
+      Sys.sleep(2.5)
+      
+      before = paste0((i*7)+90,'d')
+      after = paste0(((i+1)*7)+90,'d')
+
+      paste0('Successfully pulled ', nrow(ps_default_dat[[i]]),
+             ' submissions, with a total comment count of ', 
+             sum(ps_default_dat[[i]]$num_comments), ", all before the date of ",
+             as.POSIXct(min(ps_default_dat[[i]]$created_utc), origin="1970-01-01",tz="EST"), ".")
+      
+    },
+    error = function(cond) {
+      Sys.sleep(2.5)
+      paste0(Sys.time(), ": Iteration " , i, " Gave an error:", cond, ".")
+    },
+    warning = function(cond) {
+      before = before - 1
+      Sys.sleep(2.5)
+      paste0(Sys.time(), ": Iteration " , i, " Gave a warning: ", cond, ".")
+    }
+  )
+  
+  log_message(message)
+  
+}
+
+canada_submissions <- bind_rows(ps_default_dat)
+
+
+```
+
+## And the associated top comments
+
+```{r}
+
+reddit_comments <- list()
+
+#for (i in 1:length(canada_submissions$id)) {
+for (i in 1:3) {
+  
+  before <- round(as.numeric(Sys.time()),0)
+  
+  while (before >= canada_submissions$created_utc[i]) {
+    
+    comments_temp <- GET("https://api.pushshift.io/reddit/search/comment/",
+                         query = list(link_id = canada_submissions$id[1],
+                                      before = before,
+                                      size = 100,
+                                      fields = "id",
+                                      fields = "author",
+                                      fields = "created_utc",
+                                      fields = "parent_id",
+                                      fields = "body")) %>% 
+      content("text", encoding = "UTF-8") %>% 
+      fromJSON(flatten = FALSE) %>% 
+      .$data
+    
+    # If we get no new data...
+    if (length(comments_temp) == 0) break
+
+    before = min(comments_temp$created_utc)
+    
+    if (length(reddit_comments) < i) {
+      reddit_comments[[i]] <- comments_temp
+    } else {
+      reddit_comments[[i]] <- rbind(reddit_comments[[i]], comments_temp)
+    }
+    
+    
+    paste0('Successfully pulled ', nrow(comments_temp),
+           ' comments, for a total of ', 
+           nrow(reddit_comments[[i]]), ", all before the date of ",
+           as.POSIXct(min(before), origin="1970-01-01",tz="EST"), ".") %>%
+      log_message()
+    
+    Sys.sleep(3)
+  }
+}
+
+```
+
+## Activity 2
+
+```{r}
+
+# Modify the code above to pull complete data and save the .json file locally in case you want other fields later...
+
+```
+
+
+# Open Parliament
+
+## Get bill details
+
+```{r}
+# https://openparliament.ca/api/
+
+bills <- GET("https://api.openparliament.ca/votes",
+             query = list(format = "json")) %>%
+  content("text", encoding = "UTF-8") %>%
+  fromJSON() %>%
+  .$objects %>%
+  flatten()
+
+bills
+```
+
+## Get details of the vote
+```{r}
+
+vote_details <- list()
+
+for (i in 1:length(bills$url)) {
+  
+  vote <- GET(paste0("https://api.openparliament.ca/",bills$url[i]),
+             query = list(format = "json")) %>%
+  content("text", encoding = "UTF-8") %>%
+  fromJSON(flatten= TRUE)
+  
+  vote_details[[i]] <- vote$party_votes %>%
+    add_column(yea_total = vote$yea_total) %>%
+    add_column(nay_total = vote$nay_total) %>%
+    add_column(session = vote$session) %>%
+    add_column(url = vote$url)
+  
+  log_message(paste0('Successfully pulled information for ',vote$url,'.'))
+
+  Sys.sleep(2.5)
+  
+}
+
+vote_details_df <- bind_rows(vote_details)
+
+dim(vote_details_df); colnames(vote_details_df); head(vote_details_df)
+```
+
+# Working with SQL
+
+- Not everything fits nicely into a datefame
+- But most things fit nicely into dataframes!
+
+```{r}
+suppressMessages(library(RSQLite))
+
+# Creates a db at the location you specify
+api_db <- dbConnect(RSQLite::SQLite(), "api_db.db")
+
+class(api_db); api_db
+```
+
+
+```{r}
+colnames(bills)[10:11] <- c("description_fr","description_en")
+dbWriteTable(api_db, "bills", bills, overwrite = TRUE)
+
+dbGetQuery(api_db, "SELECT * FROM bills")
+dbGetQuery(api_db, "SELECT * FROM bills LIMIT 1")
+dbGetQuery(api_db, "SELECT session, result, yea_total, date FROM bills")
+```
+
+
+```{r}
+
+colnames(vote_details_df)[3:4] <- c("party_name_en","party_shortname_en")
+dbWriteTable(api_db, "votes", vote_details_df, overwrite = TRUE)
+
+dbGetQuery(api_db, "SELECT * FROM votes LIMIT 1")
+
+dbGetQuery(api_db, 
+           "SELECT bills.session, bills.result, bills.yea_total, bills.nay_total,
+           bills.description_en AS description, votes.party_name_en, disagreement
+           FROM bills 
+           LEFT JOIN votes ON bills.url = votes.url 
+           LIMIT 1")
+
+```
+
+## Activity 3
+
+```{r}
+
+# Write canada_submissions to your database
+
+# Write reddit_comments to your database
+
+# Use a LEFT JOIN query to get all comments for a particular submission 
+
+```
+
+## Using indexes
+
+```{r}
+
+time_taken <- function(command) {
+  start <- Sys.time()
+  output <- command
+  print(Sys.time() - start)
+  return(output)
+}
+
+sample_dat <- sample(c(1:100), size = 5000000, replace = TRUE) %>%
+  data.frame(int = ., sqrt = sqrt(.))
+
+# This takes a bit of space
+RSQLite::dbWriteTable(api_db, "sample_dat", sample_dat, overwrite = TRUE)
+```
+
+
+```{r}
+all_67s <- time_taken(dbGetQuery(api_db, "SELECT * FROM sample_dat WHERE int = 67"))
+
+dbExecute(api_db, "CREATE INDEX index_sample ON sample_dat(int)")
+
+all_67s <- time_taken(dbGetQuery(api_db, "SELECT * FROM sample_dat WHERE int = 67"))
+
+```
+
+# Other useful db commands
+
+```{r}
+
+# This cleans up the database - removes space occupied by deleted rows 
+dbExecute(api_db, "VACUUM")
+
+# This drops a table
+dbExecute(api_db, "DROP TABLE sample_dat")
+
+# These commands give a summary of all tables and indexes in your database
+dbGetQuery(api_db, "SELECT * FROM sqlite_schema WHERE type='table'")
+dbGetQuery(db.cemp, "SELECT * FROM sqlite_master WHERE type = 'index';")
+
+```
+
